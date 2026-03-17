@@ -5,11 +5,20 @@ plugins {
     id 'application'
 }
 
+ext {
+    lombokVersion = '1.18.32'
+}
+
+application {
+    // 默认启动 AgentADemo，可通过 -PmainClass=xxx 覆盖
+    mainClass = project.hasProperty('mainClass') ? project.mainClass : 'com.fox.a2a.demo.AgentADemo'
+}
+
 dependencies {
     implementation project(':a2a-core')
     implementation 'org.springframework.boot:spring-boot-starter'
-    compileOnly 'org.projectlombok:lombok'
-    annotationProcessor 'org.projectlombok:lombok'
+    compileOnly "org.projectlombok:lombok:${lombokVersion}"
+    annotationProcessor "org.projectlombok:lombok:${lombokVersion}"
     implementation 'org.slf4j:slf4j-api:2.0.12'
     runtimeOnly 'ch.qos.logback:logback-classic:1.4.14'
 }
