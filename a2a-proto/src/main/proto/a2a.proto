@@ -179,6 +179,8 @@ message ListAgentsRequest {
 message ListAgentsResponse {
   repeated AgentInfo agents = 1;
   int32 total = 2;
+  int32 page = 3;
+  int32 page_size = 4;
 }
 
 message WatchRequest {

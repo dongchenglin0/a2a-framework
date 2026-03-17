@@ -17,12 +17,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.stream.Collectors;
 
 /**
- * Registry gRPC 服务实现（v1.1 重构版）
- * 依赖从 AgentStore 升级为 RegistryProvider，支持多种注册中心后端
- * 新增：Prometheus 指标记录
+ * Registry gRPC service implementation (v1.1)
+ * Depends on RegistryProvider instead of AgentStore directly
  */
 @Slf4j
 @GrpcService
@@ -34,26 +32,24 @@ public class RegistryGrpcService extends RegistryServiceGrpc.RegistryServiceImpl
     private final RegistryProperties registryProperties;
     private final A2AMetrics metrics;
 
-    /** 监听 Agent 变更的观察者列表（线程安全） */
     private final CopyOnWriteArrayList<StreamObserver<AgentEvent>> watchObservers =
             new CopyOnWriteArrayList<>();
 
     @Override
     public void register(RegisterRequest request, StreamObserver<RegisterResponse> responseObserver) {
         try {
-            String jwtToken = request.getJwtToken();
-            if (!jwtTokenProvider.validateToken(jwtToken)) {
+            if (!jwtTokenProvider.validateToken(request.getJwtToken())) {
                 metrics.recordAuthFail();
                 responseObserver.onError(Status.UNAUTHENTICATED
-                        .withDescription("无效的 JWT Token，注册失败").asRuntimeException());
+                        .withDescription("Invalid JWT token").asRuntimeException());
                 return;
             }
             metrics.recordAuthSuccess();
 
             AgentInfo agentInfo = request.getAgentInfo();
             String agentId = agentInfo.getAgentId();
-
             Timestamp now = Timestamp.newBuilder().setSeconds(Instant.now().getEpochSecond()).build();
+
             AgentInfo fullAgentInfo = AgentInfo.newBuilder()
                     .mergeFrom(agentInfo)
                     .setRegisteredAt(now)
@@ -61,12 +57,11 @@ public class RegistryGrpcService extends RegistryServiceGrpc.RegistryServiceImpl
                     .setStatus(AgentStatus.ONLINE)
                     .build();
 
-            // 通过 RegistryProvider 注册（内部会触发 fireAgentRegistered 事件）
             registryProvider.register(fullAgentInfo);
             metrics.recordAgentRegister();
 
             String sessionToken = jwtTokenProvider.generateSessionToken(agentId);
-            log.info("Agent 注册成功: {}, 类型: {}, 注册中心: {}",
+            log.info("Agent registered: {}, type: {}, provider: {}",
                     agentId, agentInfo.getAgentType(), registryProvider.getName());
 
             broadcastAgentEvent(AgentEventType.AGENT_REGISTERED, fullAgentInfo);
@@ -76,9 +71,8 @@ public class RegistryGrpcService extends RegistryServiceGrpc.RegistryServiceImpl
                     .setSessionToken(sessionToken)
                     .build());
             responseObserver.onCompleted();
-
         } catch (Exception e) {
-            log.error("Agent 注册异常: {}", e.getMessage(), e);
+            log.error("Register error: {}", e.getMessage(), e);
             responseObserver.onError(Status.INTERNAL.withDescription(e.getMessage()).asRuntimeException());
         }
     }
@@ -86,33 +80,31 @@ public class RegistryGrpcService extends RegistryServiceGrpc.RegistryServiceImpl
     @Override
     public void deregister(DeregisterRequest request, StreamObserver<DeregisterResponse> responseObserver) {
         try {
-            String sessionToken = request.getSessionToken();
-            if (!jwtTokenProvider.validateToken(sessionToken)) {
+            if (!jwtTokenProvider.validateToken(request.getSessionToken())) {
                 responseObserver.onError(Status.UNAUTHENTICATED
-                        .withDescription("无效的 Session Token").asRuntimeException());
+                        .withDescription("Invalid session token").asRuntimeException());
                 return;
             }
 
-            String agentId = jwtTokenProvider.getAgentId(sessionToken);
+            String agentId = jwtTokenProvider.getAgentId(request.getSessionToken());
             Optional<AgentInfo> agentInfoOpt = registryProvider.findById(agentId);
 
             if (!registryProvider.exists(agentId)) {
                 responseObserver.onError(Status.NOT_FOUND
-                        .withDescription("Agent 不存在: " + agentId).asRuntimeException());
+                        .withDescription("Agent not found: " + agentId).asRuntimeException());
                 return;
             }
 
             registryProvider.deregister(agentId);
             metrics.recordAgentDeregister();
-            log.info("Agent 注销成功: {}", agentId);
+            log.info("Agent deregistered: {}", agentId);
 
             agentInfoOpt.ifPresent(info -> broadcastAgentEvent(AgentEventType.AGENT_DEREGISTERED, info));
 
             responseObserver.onNext(DeregisterResponse.newBuilder().setSuccess(true).build());
             responseObserver.onCompleted();
-
         } catch (Exception e) {
-            log.error("Agent 注销异常: {}", e.getMessage(), e);
+            log.error("Deregister error: {}", e.getMessage(), e);
             responseObserver.onError(Status.INTERNAL.withDescription(e.getMessage()).asRuntimeException());
         }
     }
@@ -123,30 +115,30 @@ public class RegistryGrpcService extends RegistryServiceGrpc.RegistryServiceImpl
             String agentId = request.getAgentId();
             if (!jwtTokenProvider.validateToken(request.getSessionToken())) {
                 responseObserver.onError(Status.UNAUTHENTICATED
-                        .withDescription("无效的 Session Token").asRuntimeException());
+                        .withDescription("Invalid session token").asRuntimeException());
                 return;
             }
 
             if (!registryProvider.exists(agentId)) {
                 responseObserver.onError(Status.NOT_FOUND
-                        .withDescription("Agent 不存在: " + agentId).asRuntimeException());
+                        .withDescription("Agent not found: " + agentId).asRuntimeException());
                 return;
             }
 
-            AgentStatus newStatus = request.hasStatus() ? request.getStatus() : AgentStatus.ONLINE;
+            AgentStatus newStatus = request.getStatus() != AgentStatus.UNKNOWN
+                    ? request.getStatus() : AgentStatus.ONLINE;
             registryProvider.heartbeat(agentId, newStatus, System.currentTimeMillis());
             metrics.recordHeartbeat();
-            log.debug("Agent [{}] 心跳更新", agentId);
+            log.debug("Heartbeat: {}", agentId);
 
             responseObserver.onNext(HeartbeatResponse.newBuilder()
                     .setSuccess(true)
-                    .setServerTimestamp(Timestamp.newBuilder()
+                    .setServerTime(Timestamp.newBuilder()
                             .setSeconds(Instant.now().getEpochSecond()).build())
                     .build());
             responseObserver.onCompleted();
-
         } catch (Exception e) {
-            log.error("心跳处理异常: {}", e.getMessage(), e);
+            log.error("Heartbeat error: {}", e.getMessage(), e);
             responseObserver.onError(Status.INTERNAL.withDescription(e.getMessage()).asRuntimeException());
         }
     }
@@ -163,16 +155,14 @@ public class RegistryGrpcService extends RegistryServiceGrpc.RegistryServiceImpl
             );
 
             metrics.recordDiscoverLatency(sample);
-            log.debug("发现 Agent，类型: {}, 结果数: {}", request.getAgentType(), agents.size());
+            log.debug("Discover: type={}, results={}", request.getAgentType(), agents.size());
 
             responseObserver.onNext(DiscoverResponse.newBuilder()
                     .addAllAgents(agents)
-                    .setTotal(agents.size())
                     .build());
             responseObserver.onCompleted();
-
         } catch (Exception e) {
-            log.error("发现 Agent 异常: {}", e.getMessage(), e);
+            log.error("Discover error: {}", e.getMessage(), e);
             responseObserver.onError(Status.INTERNAL.withDescription(e.getMessage()).asRuntimeException());
         }
     }
@@ -183,10 +173,11 @@ public class RegistryGrpcService extends RegistryServiceGrpc.RegistryServiceImpl
             Optional<AgentInfo> agentInfoOpt = registryProvider.findById(request.getAgentId());
             if (agentInfoOpt.isEmpty()) {
                 responseObserver.onError(Status.NOT_FOUND
-                        .withDescription("Agent 不存在: " + request.getAgentId()).asRuntimeException());
+                        .withDescription("Agent not found: " + request.getAgentId()).asRuntimeException());
                 return;
             }
-            responseObserver.onNext(GetAgentResponse.newBuilder().setAgentInfo(agentInfoOpt.get()).build());
+            responseObserver.onNext(GetAgentResponse.newBuilder()
+                    .setAgent(agentInfoOpt.get()).build());
             responseObserver.onCompleted();
         } catch (Exception e) {
             responseObserver.onError(Status.INTERNAL.withDescription(e.getMessage()).asRuntimeException());
@@ -196,9 +187,12 @@ public class RegistryGrpcService extends RegistryServiceGrpc.RegistryServiceImpl
     @Override
     public void listAgents(ListAgentsRequest request, StreamObserver<ListAgentsResponse> responseObserver) {
         try {
-            List<AgentInfo> agents = request.hasStatus()
-                    ? registryProvider.findByStatus(request.getStatus())
-                    : registryProvider.findAll();
+            List<AgentInfo> agents;
+            if (request.getStatusFilter() != AgentStatus.UNKNOWN) {
+                agents = registryProvider.findByStatus(request.getStatusFilter());
+            } else {
+                agents = registryProvider.findAll();
+            }
 
             int total = agents.size();
             int pageSize = request.getPageSize() > 0 ? request.getPageSize() : 20;
@@ -208,7 +202,11 @@ public class RegistryGrpcService extends RegistryServiceGrpc.RegistryServiceImpl
             List<AgentInfo> paged = from < total ? agents.subList(from, to) : List.of();
 
             responseObserver.onNext(ListAgentsResponse.newBuilder()
-                    .addAllAgents(paged).setTotal(total).setPage(page).setPageSize(pageSize).build());
+                    .addAllAgents(paged)
+                    .setTotal(total)
+                    .setPage(page)
+                    .setPageSize(pageSize)
+                    .build());
             responseObserver.onCompleted();
         } catch (Exception e) {
             responseObserver.onError(Status.INTERNAL.withDescription(e.getMessage()).asRuntimeException());
@@ -216,21 +214,21 @@ public class RegistryGrpcService extends RegistryServiceGrpc.RegistryServiceImpl
     }
 
     @Override
-    public void watchAgents(WatchAgentsRequest request, StreamObserver<AgentEvent> responseObserver) {
-        log.info("新增 watchAgents 观察者，当前数: {}", watchObservers.size() + 1);
+    public void watchAgents(WatchRequest request, StreamObserver<AgentEvent> responseObserver) {
+        log.info("New watchAgents observer, total: {}", watchObservers.size() + 1);
         watchObservers.add(responseObserver);
 
-        // 推送当前所有在线 Agent 的初始快照
         try {
             registryProvider.findByStatus(AgentStatus.ONLINE).forEach(agentInfo ->
                 responseObserver.onNext(AgentEvent.newBuilder()
                     .setEventType(AgentEventType.AGENT_REGISTERED)
-                    .setAgentInfo(agentInfo)
-                    .setTimestamp(Timestamp.newBuilder().setSeconds(Instant.now().getEpochSecond()).build())
+                    .setAgent(agentInfo)
+                    .setOccurredAt(Timestamp.newBuilder()
+                            .setSeconds(Instant.now().getEpochSecond()).build())
                     .build())
             );
         } catch (Exception e) {
-            log.warn("推送初始快照失败: {}", e.getMessage());
+            log.warn("Failed to push initial snapshot: {}", e.getMessage());
         }
     }
 
@@ -239,8 +237,9 @@ public class RegistryGrpcService extends RegistryServiceGrpc.RegistryServiceImpl
 
         AgentEvent event = AgentEvent.newBuilder()
                 .setEventType(eventType)
-                .setAgentInfo(agentInfo)
-                .setTimestamp(Timestamp.newBuilder().setSeconds(Instant.now().getEpochSecond()).build())
+                .setAgent(agentInfo)
+                .setOccurredAt(Timestamp.newBuilder()
+                        .setSeconds(Instant.now().getEpochSecond()).build())
                 .build();
 
         List<StreamObserver<AgentEvent>> dead = new ArrayList<>();
@@ -248,7 +247,7 @@ public class RegistryGrpcService extends RegistryServiceGrpc.RegistryServiceImpl
             try {
                 observer.onNext(event);
             } catch (Exception e) {
-                log.warn("推送 AgentEvent 失败，移除观察者: {}", e.getMessage());
+                log.warn("Failed to push AgentEvent, removing observer: {}", e.getMessage());
                 dead.add(observer);
             }
         }

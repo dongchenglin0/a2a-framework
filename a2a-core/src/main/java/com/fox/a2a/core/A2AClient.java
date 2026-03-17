@@ -80,25 +80,24 @@ public class A2AClient implements Closeable {
     public void register() {
         log.info("正在注册 Agent [{}] 到 Registry...", config.getAgentId());
 
-        // 构建注册请求
-        RegisterRequest.Builder requestBuilder = RegisterRequest.newBuilder()
+        // 构建注册请求（RegisterRequest 包含 AgentInfo 对象）
+        AgentInfo.Builder agentInfoBuilder = AgentInfo.newBuilder()
                 .setAgentId(config.getAgentId())
                 .setAgentName(config.getAgentName())
                 .setAgentType(config.getAgentType())
                 .setHost(config.getAgentHost())
                 .setPort(config.getAgentPort());
 
-        // 添加能力列表
         if (config.getCapabilities() != null) {
-            requestBuilder.addAllCapabilities(config.getCapabilities());
+            agentInfoBuilder.addAllCapabilities(config.getCapabilities());
         }
-
-        // 添加元数据
         if (config.getMetadata() != null) {
-            requestBuilder.putAllMetadata(config.getMetadata());
+            agentInfoBuilder.putAllMetadata(config.getMetadata());
         }
 
-        // 添加 JWT token（如果有）
+        RegisterRequest.Builder requestBuilder = RegisterRequest.newBuilder()
+                .setAgentInfo(agentInfoBuilder.build());
+
         if (config.getJwtToken() != null && !config.getJwtToken().isEmpty()) {
             requestBuilder.setJwtToken(config.getJwtToken());
         }
@@ -112,7 +111,7 @@ public class A2AClient implements Closeable {
                 // 注册成功后启动心跳
                 startHeartbeat();
             } else {
-                throw new RuntimeException("Agent 注册失败: " + response.getMessage());
+                throw new RuntimeException("Agent 注册失败: " + response.getError().getMessage());
             }
         } catch (Exception e) {
             log.error("Agent [{}] 注册异常", config.getAgentId(), e);
@@ -152,7 +151,6 @@ public class A2AClient implements Closeable {
         log.debug("发现 Agent，类型: {}", agentType);
         DiscoverRequest request = DiscoverRequest.newBuilder()
                 .setAgentType(agentType)
-                .setSessionToken(sessionToken != null ? sessionToken : "")
                 .build();
         DiscoverResponse response = registryStub.discover(request);
         return response.getAgentsList();
@@ -167,8 +165,7 @@ public class A2AClient implements Closeable {
     public List<AgentInfo> discoverByCapability(String capability) {
         log.debug("发现 Agent，能力: {}", capability);
         DiscoverRequest request = DiscoverRequest.newBuilder()
-                .setCapability(capability)
-                .setSessionToken(sessionToken != null ? sessionToken : "")
+                .addCapabilities(capability)
                 .build();
         DiscoverResponse response = registryStub.discover(request);
         return response.getAgentsList();
@@ -210,17 +207,20 @@ public class A2AClient implements Closeable {
                         .withDeadlineAfter(timeoutMs, TimeUnit.MILLISECONDS);
 
         // 构建请求消息
-        SendMessageRequest request = SendMessageRequest.newBuilder()
+        Message reqMsg = Message.newBuilder()
                 .setMessageId(generateMessageId())
                 .setFromAgentId(config.getAgentId())
                 .setToAgentId(toAgentId)
                 .setPayload(mapToStruct(payload))
+                .build();
+        SendRequestMsg request = SendRequestMsg.newBuilder()
+                .setMessage(reqMsg)
                 .setSessionToken(sessionToken != null ? sessionToken : "")
                 .build();
 
         // 发送并等待响应
-        SendMessageResponse response = targetStub.sendRequest(request);
-        return response.getMessage();
+        SendResponseMsg response = targetStub.sendRequest(request);
+        return response.getResponse();
     }
 
     /**
@@ -248,12 +248,15 @@ public class A2AClient implements Closeable {
 
         String messageId = generateMessageId();
         // 构建单向消息请求
-        SendOneWayRequest request = SendOneWayRequest.newBuilder()
+        Message sendMsg = Message.newBuilder()
                 .setMessageId(messageId)
                 .setFromAgentId(config.getAgentId())
                 .setToAgentId(toAgentId)
                 .setTopic(topic)
                 .setPayload(mapToStruct(payload))
+                .build();
+        SendMsg request = SendMsg.newBuilder()
+                .setMessage(sendMsg)
                 .setSessionToken(sessionToken != null ? sessionToken : "")
                 .build();
 
@@ -272,10 +275,9 @@ public class A2AClient implements Closeable {
         log.debug("发布消息到 topic: {}", topic);
         String messageId = generateMessageId();
         PublishRequest request = PublishRequest.newBuilder()
-                .setMessageId(messageId)
-                .setFromAgentId(config.getAgentId())
                 .setTopic(topic)
                 .setPayload(mapToStruct(payload))
+                .setPublisherAgentId(config.getAgentId())
                 .setSessionToken(sessionToken != null ? sessionToken : "")
                 .build();
         pubSubStub.publish(request);
@@ -319,12 +321,15 @@ public class A2AClient implements Closeable {
                         .withDeadlineAfter(timeoutSeconds, TimeUnit.SECONDS);
 
         // 构建任务委托请求
-        DelegateTaskRequest request = DelegateTaskRequest.newBuilder()
+        Task delegateTask = Task.newBuilder()
+                .setTaskId(generateMessageId())
+                .setTaskType(taskType)
                 .setDelegatorAgentId(config.getAgentId())
                 .setExecutorAgentId(toAgentId)
-                .setTaskType(taskType)
                 .setInput(mapToStruct(input))
-                .setTimeoutSeconds(timeoutSeconds)
+                .build();
+        DelegateTaskRequest request = DelegateTaskRequest.newBuilder()
+                .setTask(delegateTask)
                 .setSessionToken(sessionToken != null ? sessionToken : "")
                 .build();
 
@@ -470,10 +475,10 @@ public class A2AClient implements Closeable {
         try {
             GetAgentRequest request = GetAgentRequest.newBuilder()
                     .setAgentId(agentId)
-                    .setSessionToken(sessionToken != null ? sessionToken : "")
                     .build();
             GetAgentResponse response = registryStub.getAgent(request);
-            return response.hasAgent() ? response.getAgent() : null;
+            AgentInfo agent = response.getAgent();
+            return agent.getAgentId().isEmpty() ? null : agent;
         } catch (Exception e) {
             log.error("查找 Agent [{}] 失败", agentId, e);
             return null;

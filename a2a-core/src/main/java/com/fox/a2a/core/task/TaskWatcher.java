@@ -64,7 +64,7 @@ public class TaskWatcher {
                     return;
                 }
                 log.debug("收到任务事件，taskId: {}，eventType: {}",
-                        event.getTaskId(), event.getEventType());
+                        event.getTaskId(), event.getStatus());
                 try {
                     onEvent.accept(event);
                 } catch (Exception e) {

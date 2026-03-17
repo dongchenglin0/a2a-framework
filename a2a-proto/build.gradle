@@ -4,7 +4,7 @@ plugins {
 }
 
 group = 'com.fox.a2a'
-version = '1.0.0'
+version = '1.1.0'
 
 java {
     sourceCompatibility = JavaVersion.VERSION_17
@@ -35,7 +35,8 @@ protobuf {
     }
     plugins {
         grpc {
-            artifact = "io.grpc:protoc-gen-grpc-java:${grpcVersion}"
+            // Windows 需要指定 exe 后缀，避免 protoc-gen-grpc 找不到
+            artifact = "io.grpc:protoc-gen-grpc-java:${grpcVersion}:exe@exe"
         }
     }
     generateProtoTasks {

@@ -238,78 +238,74 @@ public class AgentServer {
          * 调用 messageHandler.handleRequest() 获取响应，并返回给调用方
          */
         @Override
-        public void sendRequest(SendMessageRequest request,
-                                StreamObserver<SendMessageResponse> responseObserver) {
-            log.debug("收到同步请求，来自 Agent [{}]，messageId: {}",
-                    request.getFromAgentId(), request.getMessageId());
+        public void sendRequest(SendRequestMsg request,
+                                StreamObserver<SendResponseMsg> responseObserver) {
+            Message inMsg = request.getMessage();
+            log.debug("Received sync request from Agent [{}], messageId: {}",
+                    inMsg.getFromAgentId(), inMsg.getMessageId());
             try {
                 Map<String, Object> responsePayload;
                 if (messageHandler != null) {
-                    // 将 protobuf Struct 转为 Map，调用业务处理器
-                    Map<String, Object> payload = structToMap(request.getPayload());
+                    Map<String, Object> payload = structToMap(inMsg.getPayload());
                     responsePayload = messageHandler.handleRequest(
-                            request.getFromAgentId(),
-                            request.getMessageId(),
+                            inMsg.getFromAgentId(),
+                            inMsg.getMessageId(),
                             payload
                     );
                 } else {
-                    log.warn("未设置 MessageHandler，返回空响应");
+                    log.warn("No MessageHandler set, returning empty response");
                     responsePayload = Collections.emptyMap();
                 }
 
-                // 构建响应消息
                 Message responseMessage = Message.newBuilder()
                         .setMessageId(UUID.randomUUID().toString())
-                        .setFromAgentId(request.getToAgentId())
-                        .setToAgentId(request.getFromAgentId())
+                        .setFromAgentId(inMsg.getToAgentId())
+                        .setToAgentId(inMsg.getFromAgentId())
                         .setPayload(mapToStruct(responsePayload))
                         .build();
 
-                SendMessageResponse response = SendMessageResponse.newBuilder()
-                        .setMessage(responseMessage)
-                        .setSuccess(true)
+                SendResponseMsg response = SendResponseMsg.newBuilder()
+                        .setResponse(responseMessage)
                         .build();
 
                 responseObserver.onNext(response);
                 responseObserver.onCompleted();
             } catch (Exception e) {
-                log.error("处理同步请求异常，messageId: {}", request.getMessageId(), e);
+                log.error("Error handling sync request, messageId: {}", inMsg.getMessageId(), e);
                 responseObserver.onError(io.grpc.Status.INTERNAL
-                        .withDescription("处理请求失败: " + e.getMessage())
+                        .withDescription("Request handling failed: " + e.getMessage())
                         .asRuntimeException());
             }
         }
 
-        /**
-         * 处理单向消息（Fire-and-Forget）
-         * 调用 messageHandler.handleMessage()，不返回业务数据
-         */
         @Override
-        public void send(SendOneWayRequest request,
-                         StreamObserver<SendOneWayResponse> responseObserver) {
-            log.debug("收到单向消息，来自 Agent [{}]，topic: {}",
-                    request.getFromAgentId(), request.getTopic());
+        public void send(SendMsg request,
+                         StreamObserver<SendAck> responseObserver) {
+            Message inMsg = request.getMessage();
+            log.debug("Received one-way message from Agent [{}], topic: {}",
+                    inMsg.getFromAgentId(), inMsg.getTopic());
             try {
                 if (messageHandler != null) {
-                    Map<String, Object> payload = structToMap(request.getPayload());
+                    Map<String, Object> payload = structToMap(inMsg.getPayload());
                     messageHandler.handleMessage(
-                            request.getFromAgentId(),
-                            request.getTopic(),
+                            inMsg.getFromAgentId(),
+                            inMsg.getTopic(),
                             payload
                     );
                 } else {
-                    log.warn("未设置 MessageHandler，忽略单向消息");
+                    log.warn("No MessageHandler set, ignoring one-way message");
                 }
 
-                SendOneWayResponse response = SendOneWayResponse.newBuilder()
-                        .setSuccess(true)
+                SendAck ack = SendAck.newBuilder()
+                        .setMessageId(inMsg.getMessageId())
+                        .setAccepted(true)
                         .build();
-                responseObserver.onNext(response);
+                responseObserver.onNext(ack);
                 responseObserver.onCompleted();
             } catch (Exception e) {
-                log.error("处理单向消息异常，messageId: {}", request.getMessageId(), e);
+                log.error("Error handling one-way message, messageId: {}", inMsg.getMessageId(), e);
                 responseObserver.onError(io.grpc.Status.INTERNAL
-                        .withDescription("处理消息失败: " + e.getMessage())
+                        .withDescription("Message handling failed: " + e.getMessage())
                         .asRuntimeException());
             }
         }
@@ -328,11 +324,11 @@ public class AgentServer {
         @Override
         public void delegateTask(DelegateTaskRequest request,
                                  StreamObserver<DelegateTaskResponse> responseObserver) {
-            String taskId = UUID.randomUUID().toString();
-            log.info("收到任务委托，来自 Agent [{}]，taskType: {}，taskId: {}",
-                    request.getDelegatorAgentId(), request.getTaskType(), taskId);
+            Task task = request.getTask();
+            String taskId = task.getTaskId().isEmpty() ? UUID.randomUUID().toString() : task.getTaskId();
+            log.info("Received task delegation from Agent [{}], taskType: {}, taskId: {}",
+                    task.getDelegatorAgentId(), task.getTaskType(), taskId);
 
-            // 立即返回 accepted，异步执行任务
             DelegateTaskResponse response = DelegateTaskResponse.newBuilder()
                     .setTaskId(taskId)
                     .setAccepted(true)
@@ -340,38 +336,33 @@ public class AgentServer {
             responseObserver.onNext(response);
             responseObserver.onCompleted();
 
-            // 异步执行任务
             if (taskHandler != null) {
                 taskExecutor.submit(() -> {
                     try {
-                        Map<String, Object> input = structToMap(request.getInput());
-                        Map<String, Object> result = taskHandler.handleTask(
+                        Map<String, Object> input = structToMap(task.getInput());
+                        taskHandler.handleTask(
                                 taskId,
-                                request.getTaskType(),
-                                request.getDelegatorAgentId(),
+                                task.getTaskType(),
+                                task.getDelegatorAgentId(),
                                 input
                         );
-                        log.info("任务 [{}] 执行完成", taskId);
+                        log.info("Task [{}] completed", taskId);
                     } catch (Exception e) {
-                        log.error("任务 [{}] 执行失败", taskId, e);
+                        log.error("Task [{}] failed", taskId, e);
                     }
                 });
             } else {
-                log.warn("未设置 TaskHandler，任务 [{}] 将被忽略", taskId);
+                log.warn("No TaskHandler set, task [{}] will be ignored", taskId);
             }
         }
 
-        /**
-         * 查询任务状态
-         */
         @Override
         public void getTaskStatus(GetTaskStatusRequest request,
                                   StreamObserver<GetTaskStatusResponse> responseObserver) {
-            log.debug("查询任务状态，taskId: {}", request.getTaskId());
-            // 此处返回基础响应，实际状态管理由上层业务实现
+            log.debug("Query task status, taskId: {}", request.getTaskId());
             Task task = Task.newBuilder()
                     .setTaskId(request.getTaskId())
-                    .setStatus(TaskStatus.TASK_STATUS_RUNNING)
+                    .setStatus(TaskStatus.TASK_RUNNING)
                     .build();
             GetTaskStatusResponse response = GetTaskStatusResponse.newBuilder()
                     .setTask(task)
@@ -380,13 +371,10 @@ public class AgentServer {
             responseObserver.onCompleted();
         }
 
-        /**
-         * 取消任务
-         */
         @Override
         public void cancelTask(CancelTaskRequest request,
                                StreamObserver<CancelTaskResponse> responseObserver) {
-            log.info("收到取消任务请求，taskId: {}，原因: {}", request.getTaskId(), request.getReason());
+            log.info("Cancel task request, taskId: {}, reason: {}", request.getTaskId(), request.getReason());
             CancelTaskResponse response = CancelTaskResponse.newBuilder()
                     .setSuccess(true)
                     .build();
@@ -394,17 +382,13 @@ public class AgentServer {
             responseObserver.onCompleted();
         }
 
-        /**
-         * 监听任务进度（流式）
-         */
         @Override
         public void watchTask(WatchTaskRequest request,
                               StreamObserver<TaskEvent> responseObserver) {
-            log.debug("开始监听任务进度，taskId: {}", request.getTaskId());
-            // 发送一个初始事件，实际实现中应持续推送进度
+            log.debug("Watch task progress, taskId: {}", request.getTaskId());
             TaskEvent event = TaskEvent.newBuilder()
                     .setTaskId(request.getTaskId())
-                    .setEventType(TaskEventType.TASK_EVENT_STARTED)
+                    .setStatus(TaskStatus.TASK_RUNNING)
                     .build();
             responseObserver.onNext(event);
             responseObserver.onCompleted();

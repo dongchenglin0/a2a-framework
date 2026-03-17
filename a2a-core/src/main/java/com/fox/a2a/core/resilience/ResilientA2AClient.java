@@ -6,7 +6,6 @@ import com.fox.a2a.proto.Message;
 import com.fox.a2a.proto.MessageType;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
-import io.github.resilience4j.decorators.Decorators;
 import io.github.resilience4j.retry.Retry;
 import lombok.extern.slf4j.Slf4j;
 
@@ -140,7 +139,8 @@ public class ResilientA2AClient extends A2AClient {
         CircuitBreaker cb = cbConfig.getCircuitBreaker(agentId);
         Retry retry = cbConfig.getRetry(agentId);
 
-        Supplier<T> decorated = Decorators.ofSupplier(() -> {
+        // 手动组合：先用 CircuitBreaker 包装，再用 Retry 包装
+        Supplier<T> cbDecorated = CircuitBreaker.decorateSupplier(cb, () -> {
             try {
                 return action.call();
             } catch (RuntimeException e) {
@@ -148,20 +148,19 @@ public class ResilientA2AClient extends A2AClient {
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
-        })
-        .withCircuitBreaker(cb)
-        .withRetry(retry)
-        .withFallback(
-            // 仅在熔断器打开（CallNotPermittedException）时执行降级
-            List.of(CallNotPermittedException.class),
-            e -> {
-                log.warn("Agent [{}] 熔断器已打开，执行降级逻辑", agentId);
-                return fallback.apply(e);
-            }
-        )
-        .decorate();
+        });
 
-        return decorated.get();
+        Supplier<T> retryDecorated = Retry.decorateSupplier(retry, cbDecorated);
+
+        try {
+            return retryDecorated.get();
+        } catch (CallNotPermittedException e) {
+            log.warn("Agent [{}] circuit breaker is OPEN, executing fallback", agentId);
+            return fallback.apply(e);
+        } catch (Exception e) {
+            log.warn("Agent [{}] call failed after retries, executing fallback: {}", agentId, e.getMessage());
+            return fallback.apply(e);
+        }
     }
 
     /**

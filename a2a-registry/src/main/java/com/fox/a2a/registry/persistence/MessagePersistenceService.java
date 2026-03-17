@@ -117,8 +117,8 @@ public class MessagePersistenceService {
             String streamKey = STREAM_PREFIX + topic;
             List<MapRecord<String, Object, Object>> records =
                 stringRedisTemplate.opsForStream().read(
-                    StreamOffset.create(streamKey, ReadOffset.from(fromOffset)),
-                    StreamReadOptions.empty().count(count)
+                    StreamReadOptions.empty().count(count),
+                    StreamOffset.create(streamKey, ReadOffset.from(fromOffset))
                 );
 
             if (records == null || records.isEmpty()) {

@@ -95,7 +95,7 @@ public class PubSubSubscriber {
      */
     private void doSubscribe(List<String> topics, Consumer<PubSubMessage> handler) {
         // 构建订阅请求
-        SubscribeRequest request = SubscribeRequest.newBuilder()
+        PubSubSubscribeRequest request = PubSubSubscribeRequest.newBuilder()
                 .setAgentId(agentId)
                 .addAllTopics(topics)
                 .setSessionToken(sessionToken != null ? sessionToken : "")
