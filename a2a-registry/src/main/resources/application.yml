@@ -29,18 +29,76 @@ a2a:
     # 清理离线 Agent 的间隔（秒）
     cleanup-interval-seconds: 60
   jwt:
+    # 旧版 JWT 配置（保留兼容性，新版请使用 a2a.security.jwt）
     secret: ${A2A_JWT_SECRET:a2a-default-secret-change-in-production-must-be-32-chars}
     expiration-hours: 24
     issuer: a2a-registry
+  security:
+    # TLS 配置（gRPC 传输层加密）
+    tls:
+      enabled: ${A2A_TLS_ENABLED:false}
+      cert-chain-file: ${A2A_TLS_CERT:}
+      private-key-file: ${A2A_TLS_KEY:}
+      trust-cert-collection-file: ${A2A_TLS_TRUST_CERT:}
+      mutual-tls: ${A2A_MTLS_ENABLED:false}
+    # JWT 增强配置
+    jwt:
+      secret: ${A2A_JWT_SECRET:a2a-default-secret-change-in-production-must-be-32-chars}
+      expiration-hours: 24
+      issuer: a2a-registry
+      # Token 黑名单检查（需要 Redis 支持以获得最佳效果）
+      enable-revocation-check: ${A2A_JWT_REVOCATION_CHECK:false}
 
+# Spring Boot Actuator + Prometheus 监控配置
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        # 暴露 health、info、metrics、prometheus 端点
+        include: health,info,metrics,prometheus
   endpoint:
     health:
+      # 显示详细健康信息（含自定义 HealthIndicator）
       show-details: always
+    prometheus:
+      enabled: true
+  metrics:
+    tags:
+      # 为所有指标添加 application 标签，便于 Prometheus 多实例区分
+      application: a2a-registry
+    distribution:
+      # 为以下指标启用直方图（支持 Prometheus histogram_quantile 查询）
+      percentiles-histogram:
+        a2a_message_request_latency_ms: true
+        a2a_grpc_call_duration_ms: true
+
+# Resilience4j 熔断/重试配置
+resilience4j:
+  circuitbreaker:
+    instances:
+      # agentCall：用于 Agent 间调用的熔断器
+      agentCall:
+        # 滑动窗口大小（最近 10 次调用）
+        sliding-window-size: 10
+        # 失败率阈值（50% 失败则打开熔断器）
+        failure-rate-threshold: 50
+        # 熔断器打开后等待时间（10 秒后进入半开状态）
+        wait-duration-in-open-state: 10s
+        # 半开状态允许通过的请求数
+        permitted-number-of-calls-in-half-open-state: 3
+        # 自动从 OPEN 转为 HALF_OPEN（无需手动触发）
+        automatic-transition-from-open-to-half-open-enabled: true
+  retry:
+    instances:
+      # agentCall：用于 Agent 间调用的重试策略
+      agentCall:
+        # 最大重试次数（含首次调用）
+        max-attempts: 3
+        # 重试等待时间
+        wait-duration: 500ms
+        # 触发重试的异常类型
+        retry-exceptions:
+          - io.grpc.StatusRuntimeException
 
 logging:
   level:

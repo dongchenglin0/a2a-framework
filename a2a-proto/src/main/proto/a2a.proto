@@ -381,3 +381,36 @@ message TopicInfo {
   int32 subscriber_count = 3;
   google.protobuf.Timestamp created_at = 4;
 }
+
+// ==================== 版本协商 ====================
+
+service VersionService {
+  // 获取服务端版本信息
+  rpc GetVersion(GetVersionRequest) returns (GetVersionResponse);
+  // 协商协议版本（客户端发送支持的版本列表，服务端返回选定版本）
+  rpc NegotiateVersion(NegotiateVersionRequest) returns (NegotiateVersionResponse);
+}
+
+message GetVersionRequest {}
+
+message GetVersionResponse {
+  string framework_version = 1;              // 框架版本，如 "1.1.0"
+  string proto_version = 2;                  // 当前 proto 协议版本，如 "v1"
+  repeated string supported_proto_versions = 3;  // 服务端支持的所有协议版本列表
+  string min_client_version = 4;             // 最低兼容客户端版本
+  map<string, string> capabilities = 5;      // 服务端能力标记（如 pubsub/tls/persistence）
+}
+
+message NegotiateVersionRequest {
+  string client_version = 1;                        // 客户端框架版本
+  repeated string supported_proto_versions = 2;     // 客户端支持的协议版本列表
+  map<string, string> client_capabilities = 3;      // 客户端能力声明
+}
+
+message NegotiateVersionResponse {
+  bool compatible = 1;                              // 是否兼容（false 时客户端应拒绝连接）
+  string selected_proto_version = 2;                // 协商选定的协议版本
+  string server_version = 3;                        // 服务端框架版本
+  string deprecation_notice = 4;                    // 版本废弃提示（非空时客户端应打印警告）
+  map<string, string> negotiated_capabilities = 5;  // 双方协商后的能力集合
+}

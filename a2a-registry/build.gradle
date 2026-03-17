@@ -37,6 +37,14 @@ dependencies {
     runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.5'
     runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.5'
 
+    // Prometheus 监控（Micrometer + Prometheus Registry）
+    implementation 'io.micrometer:micrometer-registry-prometheus'
+
+    // Resilience4j 熔断/重试（轻量引入，按需使用）
+    implementation 'io.github.resilience4j:resilience4j-spring-boot3:2.2.0'
+    implementation 'io.github.resilience4j:resilience4j-circuitbreaker:2.2.0'
+    implementation 'io.github.resilience4j:resilience4j-retry:2.2.0'
+
     // Utilities
     implementation 'com.google.guava:guava:33.0.0-jre'
     implementation 'org.apache.commons:commons-lang3:3.14.0'

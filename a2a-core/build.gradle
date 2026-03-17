@@ -3,7 +3,7 @@ plugins {
 }
 
 group = 'com.fox.a2a'
-version = '1.0.0'
+version = '1.1.0'
 
 java {
     sourceCompatibility = JavaVersion.VERSION_17
@@ -16,6 +16,7 @@ repositories {
 
 ext {
     grpcVersion = '1.62.2'
+    resilience4jVersion = '2.2.0'
 }
 
 dependencies {
@@ -28,6 +29,11 @@ dependencies {
     runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.5'
 
     implementation 'com.google.protobuf:protobuf-java-util:3.25.3'
+
+    // 熔断降级（Resilience4j）
+    implementation "io.github.resilience4j:resilience4j-circuitbreaker:${resilience4jVersion}"
+    implementation "io.github.resilience4j:resilience4j-retry:${resilience4jVersion}"
+    implementation "io.github.resilience4j:resilience4j-decorators:${resilience4jVersion}"
 
     compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'
