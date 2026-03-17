@@ -1,0 +1,6 @@
+rootProject.name = 'a2a-framework'
+
+include 'a2a-proto'
+include 'a2a-registry'
+include 'a2a-core'
+include 'a2a-demo'

@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  # ── Redis：持久化存储后端 ──────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: a2a-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── A2A Registry：Agent 注册中心 ──────────────────────────────────────────────
+  a2a-registry:
+    build:
+      context: .
+      dockerfile: a2a-registry/Dockerfile
+    container_name: a2a-registry
+    ports:
+      - "8080:8080"   # HTTP (Spring Boot Actuator / REST API)
+      - "9090:9090"   # gRPC (Agent 通讯端口)
+    environment:
+      - A2A_STORE_MODE=redis
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      # ⚠️  生产环境必须修改此密钥（至少 32 个字符）
+      - A2A_JWT_SECRET=your-secret-key-change-in-production-32chars
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/actuator/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  redis-data:
+    driver: local

@@ -1,0 +1,48 @@
+server:
+  port: 8080
+
+grpc:
+  server:
+    port: 9090
+    security:
+      enabled: false  # 生产环境建议开启 TLS
+
+spring:
+  application:
+    name: a2a-registry
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: ${REDIS_PORT:6379}
+    password: ${REDIS_PASSWORD:}
+    timeout: 3000ms
+    lettuce:
+      pool:
+        max-active: 20
+        max-idle: 10
+
+a2a:
+  registry:
+    # 存储模式: memory | redis
+    store-mode: ${A2A_STORE_MODE:memory}
+    # Agent 心跳超时（秒），超时后标记为 OFFLINE
+    heartbeat-timeout-seconds: 30
+    # 清理离线 Agent 的间隔（秒）
+    cleanup-interval-seconds: 60
+  jwt:
+    secret: ${A2A_JWT_SECRET:a2a-default-secret-change-in-production-must-be-32-chars}
+    expiration-hours: 24
+    issuer: a2a-registry
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.fox.a2a: DEBUG
+    io.grpc: INFO

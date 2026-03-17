@@ -1,0 +1,15 @@
+plugins {
+    id 'org.springframework.boot' version '3.2.3'
+    id 'io.spring.dependency-management' version '1.1.4'
+    id 'java'
+    id 'application'
+}
+
+dependencies {
+    implementation project(':a2a-core')
+    implementation 'org.springframework.boot:spring-boot-starter'
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+    implementation 'org.slf4j:slf4j-api:2.0.12'
+    runtimeOnly 'ch.qos.logback:logback-classic:1.4.14'
+}

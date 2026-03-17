@@ -1,0 +1,26 @@
+﻿# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+*.class
+
+# Node.js
+node_modules/
+dist/
+*.js.map
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# 日志
+*.log
+logs/
+
+# 环境变量
+.env
+.env.*
+
+# Docker
+docker-compose.override.yml

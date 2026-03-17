@@ -1,0 +1,383 @@
+syntax = "proto3";
+
+package com.fox.a2a;
+
+option java_package = "com.fox.a2a.proto";
+option java_outer_classname = "A2AProto";
+option java_multiple_files = true;
+
+import "google/protobuf/any.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
+
+// ==================== 基础数据结构 ====================
+
+// Agent 元信息
+message AgentInfo {
+  string agent_id = 1;          // 唯一ID
+  string agent_name = 2;        // 名称
+  string agent_type = 3;        // 类型标签
+  string host = 4;              // gRPC 服务地址
+  int32 port = 5;               // gRPC 端口
+  map<string, string> metadata = 6;  // 扩展元数据
+  AgentStatus status = 7;
+  google.protobuf.Timestamp registered_at = 8;
+  google.protobuf.Timestamp last_heartbeat = 9;
+  repeated string capabilities = 10; // 能力标签
+}
+
+enum AgentStatus {
+  UNKNOWN = 0;
+  ONLINE = 1;
+  OFFLINE = 2;
+  BUSY = 3;
+  DRAINING = 4;
+}
+
+// 消息信封
+message Message {
+  string message_id = 1;
+  string from_agent_id = 2;
+  string to_agent_id = 3;
+  string correlation_id = 4;    // 用于请求/响应关联
+  string topic = 5;             // PubSub topic
+  MessageType type = 6;
+  google.protobuf.Struct payload = 7;
+  map<string, string> headers = 8;
+  google.protobuf.Timestamp created_at = 9;
+  int32 ttl_seconds = 10;
+  Priority priority = 11;
+}
+
+enum MessageType {
+  REQUEST = 0;
+  RESPONSE = 1;
+  EVENT = 2;
+  TASK_DELEGATE = 3;
+  TASK_RESULT = 4;
+  HEARTBEAT = 5;
+  ERROR = 6;
+}
+
+enum Priority {
+  LOW = 0;
+  NORMAL = 1;
+  HIGH = 2;
+  CRITICAL = 3;
+}
+
+// 任务
+message Task {
+  string task_id = 1;
+  string task_type = 2;
+  string delegator_agent_id = 3;
+  string executor_agent_id = 4;
+  google.protobuf.Struct input = 5;
+  google.protobuf.Struct output = 6;
+  TaskStatus status = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+  int32 timeout_seconds = 10;
+  map<string, string> context = 11;
+}
+
+enum TaskStatus {
+  TASK_PENDING = 0;
+  TASK_RUNNING = 1;
+  TASK_SUCCESS = 2;
+  TASK_FAILED = 3;
+  TASK_CANCELLED = 4;
+  TASK_TIMEOUT = 5;
+}
+
+// 错误信息
+message ErrorInfo {
+  int32 code = 1;
+  string message = 2;
+  string details = 3;
+}
+
+// ==================== Registry Service ====================
+
+service RegistryService {
+  // Agent 注册
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  // Agent 注销
+  rpc Deregister(DeregisterRequest) returns (DeregisterResponse);
+  // 心跳
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  // 发现 Agent
+  rpc Discover(DiscoverRequest) returns (DiscoverResponse);
+  // 获取单个 Agent 信息
+  rpc GetAgent(GetAgentRequest) returns (GetAgentResponse);
+  // 列出所有 Agent
+  rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
+  // 订阅 Agent 状态变更（流式）
+  rpc WatchAgents(WatchRequest) returns (stream AgentEvent);
+}
+
+message RegisterRequest {
+  AgentInfo agent_info = 1;
+  string jwt_token = 2;
+}
+
+message RegisterResponse {
+  bool success = 1;
+  string session_token = 2;  // 注册成功后的会话token
+  ErrorInfo error = 3;
+}
+
+message DeregisterRequest {
+  string agent_id = 1;
+  string session_token = 2;
+}
+
+message DeregisterResponse {
+  bool success = 1;
+  ErrorInfo error = 2;
+}
+
+message HeartbeatRequest {
+  string agent_id = 1;
+  string session_token = 2;
+  AgentStatus status = 3;
+  map<string, string> metrics = 4;
+}
+
+message HeartbeatResponse {
+  bool success = 1;
+  google.protobuf.Timestamp server_time = 2;
+}
+
+message DiscoverRequest {
+  string agent_type = 1;       // 按类型过滤
+  repeated string capabilities = 2; // 按能力过滤
+  map<string, string> metadata_filter = 3;
+  int32 limit = 4;
+}
+
+message DiscoverResponse {
+  repeated AgentInfo agents = 1;
+  ErrorInfo error = 2;
+}
+
+message GetAgentRequest {
+  string agent_id = 1;
+}
+
+message GetAgentResponse {
+  AgentInfo agent = 1;
+  ErrorInfo error = 2;
+}
+
+message ListAgentsRequest {
+  AgentStatus status_filter = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+}
+
+message ListAgentsResponse {
+  repeated AgentInfo agents = 1;
+  int32 total = 2;
+}
+
+message WatchRequest {
+  repeated string agent_ids = 1;  // 空表示监听所有
+  string session_token = 2;
+}
+
+message AgentEvent {
+  string event_id = 1;
+  AgentEventType event_type = 2;
+  AgentInfo agent = 3;
+  google.protobuf.Timestamp occurred_at = 4;
+}
+
+enum AgentEventType {
+  AGENT_REGISTERED = 0;
+  AGENT_DEREGISTERED = 1;
+  AGENT_STATUS_CHANGED = 2;
+  AGENT_UPDATED = 3;
+}
+
+// ==================== Messaging Service ====================
+
+service MessagingService {
+  // 同步请求/响应
+  rpc SendRequest(SendRequestMsg) returns (SendResponseMsg);
+  // 单向发送（fire-and-forget）
+  rpc Send(SendMsg) returns (SendAck);
+  // 流式传输（双向）
+  rpc Stream(stream StreamChunk) returns (stream StreamChunk);
+  // 服务端推流
+  rpc Subscribe(SubscribeRequest) returns (stream Message);
+}
+
+message SendRequestMsg {
+  Message message = 1;
+  string session_token = 2;
+  int32 timeout_ms = 3;
+}
+
+message SendResponseMsg {
+  Message response = 1;
+  ErrorInfo error = 2;
+  int64 latency_ms = 3;
+}
+
+message SendMsg {
+  Message message = 1;
+  string session_token = 2;
+}
+
+message SendAck {
+  string message_id = 1;
+  bool accepted = 2;
+  ErrorInfo error = 3;
+}
+
+message StreamChunk {
+  string stream_id = 1;
+  string from_agent_id = 2;
+  string to_agent_id = 3;
+  bytes data = 4;
+  bool is_last = 5;
+  int32 sequence = 6;
+  string session_token = 7;
+}
+
+message SubscribeRequest {
+  string agent_id = 1;
+  repeated string topics = 2;
+  string session_token = 3;
+}
+
+// ==================== Task Service ====================
+
+service TaskService {
+  // 委托任务
+  rpc DelegateTask(DelegateTaskRequest) returns (DelegateTaskResponse);
+  // 查询任务状态
+  rpc GetTaskStatus(GetTaskStatusRequest) returns (GetTaskStatusResponse);
+  // 取消任务
+  rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse);
+  // 流式任务进度
+  rpc WatchTask(WatchTaskRequest) returns (stream TaskEvent);
+}
+
+message DelegateTaskRequest {
+  Task task = 1;
+  string session_token = 2;
+}
+
+message DelegateTaskResponse {
+  string task_id = 1;
+  bool accepted = 2;
+  ErrorInfo error = 3;
+}
+
+message GetTaskStatusRequest {
+  string task_id = 1;
+  string session_token = 2;
+}
+
+message GetTaskStatusResponse {
+  Task task = 1;
+  ErrorInfo error = 2;
+}
+
+message CancelTaskRequest {
+  string task_id = 1;
+  string reason = 2;
+  string session_token = 3;
+}
+
+message CancelTaskResponse {
+  bool success = 1;
+  ErrorInfo error = 2;
+}
+
+message WatchTaskRequest {
+  string task_id = 1;
+  string session_token = 2;
+}
+
+message TaskEvent {
+  string task_id = 1;
+  TaskStatus status = 2;
+  int32 progress_percent = 3;
+  string message = 4;
+  google.protobuf.Struct partial_result = 5;
+  google.protobuf.Timestamp occurred_at = 6;
+}
+
+// ==================== PubSub Service ====================
+
+service PubSubService {
+  // 发布消息
+  rpc Publish(PublishRequest) returns (PublishResponse);
+  // 订阅 topic（流式接收）
+  rpc Subscribe(PubSubSubscribeRequest) returns (stream PubSubMessage);
+  // 创建 topic
+  rpc CreateTopic(CreateTopicRequest) returns (CreateTopicResponse);
+  // 列出 topics
+  rpc ListTopics(ListTopicsRequest) returns (ListTopicsResponse);
+}
+
+message PublishRequest {
+  string topic = 1;
+  google.protobuf.Struct payload = 2;
+  string publisher_agent_id = 3;
+  string session_token = 4;
+  map<string, string> attributes = 5;
+}
+
+message PublishResponse {
+  string message_id = 1;
+  bool success = 2;
+  ErrorInfo error = 3;
+}
+
+message PubSubSubscribeRequest {
+  string agent_id = 1;
+  repeated string topics = 2;
+  string session_token = 3;
+  string subscription_id = 4;
+}
+
+message PubSubMessage {
+  string message_id = 1;
+  string topic = 2;
+  string publisher_agent_id = 3;
+  google.protobuf.Struct payload = 4;
+  map<string, string> attributes = 5;
+  google.protobuf.Timestamp published_at = 6;
+}
+
+message CreateTopicRequest {
+  string topic_name = 1;
+  string description = 2;
+  bool persistent = 3;
+  int32 retention_seconds = 4;
+  string session_token = 5;
+}
+
+message CreateTopicResponse {
+  bool success = 1;
+  ErrorInfo error = 2;
+}
+
+message ListTopicsRequest {
+  string session_token = 1;
+}
+
+message ListTopicsResponse {
+  repeated TopicInfo topics = 1;
+}
+
+message TopicInfo {
+  string name = 1;
+  string description = 2;
+  int32 subscriber_count = 3;
+  google.protobuf.Timestamp created_at = 4;
+}
